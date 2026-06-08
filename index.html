@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Larix Telemetry Overlay</title>
+    <style>
+        body, html {
+            margin: 0;
+            padding: 0;
+            width: 100%;
+            height: 100%;
+            background-color: transparent;
+            display: flex;
+            justify-content: center; 
+            align-items: center;    
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            overflow: hidden;
+        }
+
+        #overlay-container {
+            display: flex;
+            flex-direction: column;
+            align-items: flex-start; /* Keeps the labels perfectly left-aligned with each other */
+            color: #ffffff;
+            font-size: 7vw; /* Balanced size to fit 3 lines without cropping */
+            font-weight: 700;
+            text-shadow: 2px 3px 6px rgba(0, 0, 0, 0.75); 
+            letter-spacing: 0.3vw;
+            line-height: 1.3;
+        }
+
+        .tracker-line {
+            white-space: nowrap;
+        }
+    </style>
+</head>
+<body>
+
+    <div id="overlay-container">
+        <div id="distance" class="tracker-line">dist: 0.0 km</div>
+        <div id="pace" class="tracker-line">pace: 0.00 km/min</div>
+        <div id="stopwatch" class="tracker-line">5</div>
+    </div>
+
+    <script>
+        const countdownDuration = 5000; // 5 seconds
+        const startTime = Date.now();
+        
+        let totalDistance = 0; // in kilometers
+        let lastLat = null;
+        let lastLon = null;
+        let trackingStarted = false;
+
+        // Haversine formula to calculate true distance between GPS coordinates
+        function calculateDistance(lat1, lon1, lat2, lon2) {
+            const R = 6371; // Earth's radius in km
+            const dLat = (lat2 - lat1) * Math.PI / 180;
+            const dLon = (lon2 - lon1) * Math.PI / 180;
+            const a = 
+                Math.sin(dLat/2) * Math.sin(dLat/2) +
+                Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * Math.sin(dLon/2) * Math.sin(dLon/2);
+            const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+            return R * c;
+        }
+
+        // Initialize iOS Geolocation Watcher
+        if (navigator.geolocation) {
+            navigator.geolocation.watchPosition(
+                (position) => {
+                    // Do not accumulate distance or show pace during the initial 5s countdown
+                    if (!trackingStarted) return;
+
+                    const lat = position.coords.latitude;
+                    const lon = position.coords.longitude;
+                    const accuracy = position.coords.accuracy; // accuracy in meters
+
+                    // 1. Calculate Distance (Ignore poor accuracy or tiny GPS jitters)
+                    if (lastLat !== null && lastLon !== null) {
+                        const distDelta = calculateDistance(lastLat, lastLon, lat, lon);
+                        if (accuracy < 25 && distDelta > 0.002) { 
+                            totalDistance += distDelta;
+                        }
+                    }
+                    lastLat = lat;
+                    lastLon = lon;
+
+                    // 2. Calculate Pace (Convert meters/second to km/minute)
+                    let kmPerMin = 0;
+                    if (position.coords.speed !== null && position.coords.speed > 0) {
+                        kmPerMin = position.coords.speed * 0.06;
+                    }
+
+                    // Update UI elements
+                    document.getElementById('distance').textContent = `dist: ${totalDistance.toFixed(1)} km`;
+                    document.getElementById('pace').textContent = `pace: ${kmPerMin.toFixed(2)} km/min`;
+                },
+                (error) => {
+                    console.error("GPS Error: ", error);
+                },
+                {
+                    enableHighAccuracy: true,
+                    maximumAge: 0,
+                    timeout: 5000
+                }
+            );
+        }
+
+        // Core Overlay Engine Loop
+        function updateOverlay() {
+            const now = Date.now();
+            const totalElapsed = now - startTime;
+
+            if (totalElapsed < countdownDuration) {
+                // Phase 1: Countdown
+                const secondsLeft = Math.ceil((countdownDuration - totalElapsed) / 1000);
+                document.getElementById('stopwatch').textContent = secondsLeft;
+                document.getElementById('distance').textContent = "dist: 0.0 km";
+                document.getElementById('pace').textContent = "pace: 0.00 km/min";
+            } else {
+                // Phase 2: Live Tracking & Stopwatch
+                if (!trackingStarted) {
+                    trackingStarted = true; // Signals the GPS loop to start recording
+                }
+
+                const stopwatchElapsed = totalElapsed - countdownDuration;
+                let totalSeconds = Math.floor(stopwatchElapsed / 1000);
+                let hours = Math.floor(totalSeconds / 3600);
+                let minutes = Math.floor((totalSeconds % 3600) / 60);
+                let seconds = totalSeconds % 60;
+
+                hours = hours < 10 ? '0' + hours : hours;
+                minutes = minutes < 10 ? '0' + minutes : minutes;
+                seconds = seconds < 10 ? '0' + seconds : seconds;
+
+                document.getElementById('stopwatch').textContent = `${hours}:${minutes}:${seconds}`;
+            }
+        }
+
+        // Run updates at 100ms intervals for responsive countdown/stopwatch rendering
+        setInterval(updateOverlay, 100);
+        updateOverlay();
+    </script>
+</body>
+</html>
