@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Larix Telemetry Overlay</title>
+    <title>Larix Running Telemetry Overlay</title>
     <style>
         body, html {
             margin: 0;
@@ -21,9 +21,9 @@
         #overlay-container {
             display: flex;
             flex-direction: column;
-            align-items: flex-start; /* Keeps the labels perfectly left-aligned with each other */
+            align-items: flex-start; /* Keeps text left-aligned with each line */
             color: #ffffff;
-            font-size: 7vw; /* Balanced size to fit 3 lines without cropping */
+            font-size: 7vw; 
             font-weight: 700;
             text-shadow: 2px 3px 6px rgba(0, 0, 0, 0.75); 
             letter-spacing: 0.3vw;
@@ -39,7 +39,7 @@
 
     <div id="overlay-container">
         <div id="distance" class="tracker-line">dist: 0.0 km</div>
-        <div id="pace" class="tracker-line">pace: 0.00 km/min</div>
+        <div id="pace" class="tracker-line">pace: 0:00 min/km</div>
         <div id="stopwatch" class="tracker-line">5</div>
     </div>
 
@@ -47,14 +47,14 @@
         const countdownDuration = 5000; // 5 seconds
         const startTime = Date.now();
         
-        let totalDistance = 0; // in kilometers
+        let totalDistance = 0; 
         let lastLat = null;
         let lastLon = null;
         let trackingStarted = false;
 
-        // Haversine formula to calculate true distance between GPS coordinates
+        // Haversine formula for distance calculation
         function calculateDistance(lat1, lon1, lat2, lon2) {
-            const R = 6371; // Earth's radius in km
+            const R = 6371; 
             const dLat = (lat2 - lat1) * Math.PI / 180;
             const dLon = (lon2 - lon1) * Math.PI / 180;
             const a = 
@@ -64,20 +64,20 @@
             return R * c;
         }
 
-        // Initialize iOS Geolocation Watcher
         if (navigator.geolocation) {
             navigator.geolocation.watchPosition(
                 (position) => {
-                    // Do not accumulate distance or show pace during the initial 5s countdown
                     if (!trackingStarted) return;
 
                     const lat = position.coords.latitude;
                     const lon = position.coords.longitude;
-                    const accuracy = position.coords.accuracy; // accuracy in meters
+                    const accuracy = position.coords.accuracy; 
+                    const speedInMetersPerSecond = position.coords.speed;
 
-                    // 1. Calculate Distance (Ignore poor accuracy or tiny GPS jitters)
+                    // 1. Distance Calculation
                     if (lastLat !== null && lastLon !== null) {
                         const distDelta = calculateDistance(lastLat, lastLon, lat, lon);
+                        // Filter out minor GPS drift when stationary
                         if (accuracy < 25 && distDelta > 0.002) { 
                             totalDistance += distDelta;
                         }
@@ -85,19 +85,24 @@
                     lastLat = lat;
                     lastLon = lon;
 
-                    // 2. Calculate Pace (Convert meters/second to km/minute)
-                    let kmPerMin = 0;
-                    if (position.coords.speed !== null && position.coords.speed > 0) {
-                        kmPerMin = position.coords.speed * 0.06;
+                    // 2. Running Pace Calculation (MM:SS min/km)
+                    let paceStr = "0:00";
+                    
+                    // Only calculate pace if moving faster than 0.5 m/s (~1.8 km/h) to avoid division by zero
+                    if (speedInMetersPerSecond !== null && speedInMetersPerSecond > 0.5) {
+                        const totalSecondsPerKm = 1000 / speedInMetersPerSecond;
+                        const paceMinutes = Math.floor(totalSecondsPerKm / 60);
+                        const paceSeconds = Math.floor(totalSecondsPerKm % 60);
+                        
+                        const formattedSeconds = paceSeconds < 10 ? '0' + paceSeconds : paceSeconds;
+                        paceStr = `${paceMinutes}:${formattedSeconds}`;
                     }
 
-                    // Update UI elements
+                    // Update UI
                     document.getElementById('distance').textContent = `dist: ${totalDistance.toFixed(1)} km`;
-                    document.getElementById('pace').textContent = `pace: ${kmPerMin.toFixed(2)} km/min`;
+                    document.getElementById('pace').textContent = `pace: ${paceStr} min/km`;
                 },
-                (error) => {
-                    console.error("GPS Error: ", error);
-                },
+                (error) => { console.error("GPS Error: ", error); },
                 {
                     enableHighAccuracy: true,
                     maximumAge: 0,
@@ -106,7 +111,7 @@
             );
         }
 
-        // Core Overlay Engine Loop
+        // Timer Engine
         function updateOverlay() {
             const now = Date.now();
             const totalElapsed = now - startTime;
@@ -116,11 +121,11 @@
                 const secondsLeft = Math.ceil((countdownDuration - totalElapsed) / 1000);
                 document.getElementById('stopwatch').textContent = secondsLeft;
                 document.getElementById('distance').textContent = "dist: 0.0 km";
-                document.getElementById('pace').textContent = "pace: 0.00 km/min";
+                document.getElementById('pace').textContent = "pace: 0:00 min/km";
             } else {
-                // Phase 2: Live Tracking & Stopwatch
+                // Phase 2: Live
                 if (!trackingStarted) {
-                    trackingStarted = true; // Signals the GPS loop to start recording
+                    trackingStarted = true;
                 }
 
                 const stopwatchElapsed = totalElapsed - countdownDuration;
@@ -137,7 +142,6 @@
             }
         }
 
-        // Run updates at 100ms intervals for responsive countdown/stopwatch rendering
         setInterval(updateOverlay, 100);
         updateOverlay();
     </script>
