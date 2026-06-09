@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Larix Pace & Timer Overlay</title>
+    <style>
+        body, html {
+            margin: 0;
+            padding: 0;
+            width: 100%;
+            height: 100%;
+            background-color: transparent;
+            display: flex;
+            justify-content: center; 
+            align-items: center;    
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            overflow: hidden;
+        }
+
+        #overlay-container {
+            display: flex;
+            flex-direction: column;
+            align-items: flex-start; 
+            color: #ffffff;
+            font-weight: 700;
+            text-shadow: 2px 3px 6px rgba(0, 0, 0, 0.75); 
+            letter-spacing: 0.3vw;
+            line-height: 1.2;
+        }
+
+        #pace {
+            font-size: 7vw;
+            white-space: nowrap;
+        }
+
+        #stopwatch {
+            font-size: 11.8vw; /* Boosted font size so it takes up the exact same width as the pace line */
+            white-space: nowrap;
+        }
+
+        /* Styles the min/km text to be exactly half size and slightly lighter */
+        .unit {
+            font-size: 3.5vw; 
+            font-weight: 500;
+            opacity: 0.9;
+            letter-spacing: 0.1vw;
+        }
+    </style>
+</head>
+<body>
+
+    <div id="overlay-container">
+        <div id="pace">pace: 0:00 <span class="unit">min/km</span></div>
+        <div id="stopwatch">5</div>
+    </div>
+
+    <script>
+        const countdownDuration = 5000; 
+        const startTime = Date.now();
+        
+        let trackingStarted = false;
+
+        // Pace smoothing variables
+        let latestSpeed = 0;
+        let lastPaceUpdateTime = 0;
+        let currentPaceStr = "0:00";
+
+        if (navigator.geolocation) {
+            navigator.geolocation.watchPosition(
+                (position) => {
+                    if (!trackingStarted) return;
+
+                    // Cache the raw speed immediately for the 3-second averaging loop
+                    if (position.coords.speed !== null && position.coords.speed > 0) {
+                        latestSpeed = position.coords.speed;
+                    } else {
+                        latestSpeed = 0;
+                    }
+                },
+                (error) => { console.error("GPS Signal Lost: ", error); },
+                {
+                    enableHighAccuracy: true,
+                    maximumAge: 0,
+                    timeout: 10000 
+                }
+            );
+        }
+
+        // Main Refresh Loop (Handles UI updates)
+        function updateOverlay() {
+            const now = Date.now();
+            const totalElapsed = now - startTime;
+
+            if (totalElapsed < countdownDuration) {
+                // Phase 1: Countdown
+                const secondsLeft = Math.ceil((countdownDuration - totalElapsed) / 1000);
+                document.getElementById('stopwatch').textContent = secondsLeft;
+                document.getElementById('pace').innerHTML = `pace: 0:00 <span class="unit">min/km</span>`;
+                lastPaceUpdateTime = now; 
+            } else {
+                // Phase 2: Live Tracking
+                if (!trackingStarted) {
+                    trackingStarted = true;
+                }
+
+                // Smooth Pace Update: Only recalculate the layout every 3000ms (3 seconds)
+                if (now - lastPaceUpdateTime >= 3000) {
+                    if (latestSpeed > 0.5) { 
+                        const totalSecondsPerKm = 1000 / latestSpeed;
+                        const paceMinutes = Math.floor(totalSecondsPerKm / 60);
+                        const paceSeconds = Math.floor(totalSecondsPerKm % 60);
+                        const formattedSeconds = paceSeconds < 10 ? '0' + paceSeconds : paceSeconds;
+                        currentPaceStr = `${paceMinutes}:${formattedSeconds}`;
+                    } else {
+                        currentPaceStr = "0:00";
+                    }
+                    lastPaceUpdateTime = now;
+                }
+
+                // Format Stopwatch Time
+                const stopwatchElapsed = totalElapsed - countdownDuration;
+                let totalSeconds = Math.floor(stopwatchElapsed / 1000);
+                let hours = Math.floor(totalSeconds / 3600);
+                let minutes = Math.floor((totalSeconds % 3600) / 60);
+                let seconds = totalSeconds % 60;
+
+                hours = hours < 10 ? '0' + hours : hours;
+                minutes = minutes < 10 ? '0' + minutes : minutes;
+                seconds = seconds < 10 ? '0' + seconds : seconds;
+
+                // Push Updates to DOM
+                document.getElementById('pace').innerHTML = `pace: ${currentPaceStr} <span class="unit">min/km</span>`;
+                document.getElementById('stopwatch').textContent = `${hours}:${minutes}:${seconds}`;
+            }
+        }
+
+        setInterval(updateOverlay, 100);
+        updateOverlay();
+    </script>
+</body>
+</html>
