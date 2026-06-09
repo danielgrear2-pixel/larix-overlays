@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Robust Larix Telemetry</title>
+    <style>
+        body, html {
+            margin: 0;
+            padding: 0;
+            width: 100%;
+            height: 100%;
+            background-color: transparent;
+            display: flex;
+            justify-content: center; 
+            align-items: center;    
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            overflow: hidden;
+        }
+
+        #overlay-container {
+            display: flex;
+            flex-direction: column;
+            align-items: flex-start; 
+            color: #ffffff;
+            font-size: 7vw; 
+            font-weight: 700;
+            text-shadow: 2px 3px 6px rgba(0, 0, 0, 0.75); 
+            letter-spacing: 0.3vw;
+            line-height: 1.3;
+        }
+
+        .tracker-line {
+            white-space: nowrap;
+        }
+
+        /* Styles the min/km text to be exactly half size and slightly lighter */
+        .unit {
+            font-size: 3.5vw; 
+            font-weight: 500;
+            opacity: 0.9;
+            letter-spacing: 0.1vw;
+        }
+    </style>
+</head>
+<body>
+
+    <div id="overlay-container">
+        <div id="distance" class="tracker-line">dist: 0.0 km</div>
+        <div id="pace" class="tracker-line">pace: 0:00 <span class="unit">min/km</span></div>
+        <div id="stopwatch" class="tracker-line">5</div>
+    </div>
+
+    <script>
+        const countdownDuration = 5000; 
+        const startTime = Date.now();
+        
+        let totalDistance = 0; 
+        let lastLat = null;
+        let lastLon = null;
+        let trackingStarted = false;
+
+        // Pace smoothing variables
+        let latestSpeed = 0;
+        let lastPaceUpdateTime = 0;
+        let currentPaceStr = "0:00";
+
+        function calculateDistance(lat1, lon1, lat2, lon2) {
+            const R = 6371; 
+            const dLat = (lat2 - lat1) * Math.PI / 180;
+            const dLon = (lon2 - lon1) * Math.PI / 180;
+            const a = 
+                Math.sin(dLat/2) * Math.sin(dLat/2) +
+                Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * Math.sin(dLon/2) * Math.sin(dLon/2);
+            const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+            return R * c;
+        }
+
+        if (navigator.geolocation) {
+            navigator.geolocation.watchPosition(
+                (position) => {
+                    if (!trackingStarted) return;
+
+                    const lat = position.coords.latitude;
+                    const lon = position.coords.longitude;
+                    const accuracy = position.coords.accuracy; 
+                    
+                    // Cache the raw speed immediately for the 3-second averaging loop
+                    if (position.coords.speed !== null && position.coords.speed > 0) {
+                        latestSpeed = position.coords.speed;
+                    } else {
+                        latestSpeed = 0;
+                    }
+
+                    // Distance Calculation with expanded 50m tolerance for weak signal coverage
+                    if (lastLat !== null && lastLon !== null) {
+                        const distDelta = calculateDistance(lastLat, lastLon, lat, lon);
+                        
+                        // Smart filter: require greater movement if signal is poor to avoid static GPS jumping
+                        const minimumMovementNeeded = accuracy > 25 ? 0.005 : 0.002; 
+
+                        if (accuracy <= 50 && distDelta > minimumMovementNeeded) { 
+                            totalDistance += distDelta;
+                        }
+                    }
+                    
+                    // Always update last known position if accuracy is reasonable
+                    if (accuracy <= 50) {
+                        lastLat = lat;
+                        lastLon = lon;
+                    }
+                },
+                (error) => { console.error("GPS Signal Lost: ", error); },
+                {
+                    enableHighAccuracy: true,
+                    maximumAge: 0,
+                    timeout: 10000 // Give GPS longer to resolve initial locks
+                }
+            );
+        }
+
+        // Main Refresh Loop (Handles UI updates)
+        function updateOverlay() {
+            const now = Date.now();
+            const totalElapsed = now - startTime;
+
+            if (totalElapsed < countdownDuration) {
+                // Phase 1: Countdown
+                const secondsLeft = Math.ceil((countdownDuration - totalElapsed) / 1000);
+                document.getElementById('stopwatch').textContent = secondsLeft;
+                document.getElementById('distance').textContent = "dist: 0.0 km";
+                document.getElementById('pace').innerHTML = `pace: 0:00 <span class="unit">min/km</span>`;
+                lastPaceUpdateTime = now; // Sync pace timer to start right after countdown ends
+            } else {
+                // Phase 2: Live Tracking
+                if (!trackingStarted) {
+                    trackingStarted = true;
+                }
+
+                // Smooth Pace Update: Only recalculate the layout every 3000ms (3 seconds)
+                if (now - lastPaceUpdateTime >= 3000) {
+                    if (latestSpeed > 0.5) { // Roughly faster than a slow walk
+                        const totalSecondsPerKm = 1000 / latestSpeed;
+                        const paceMinutes = Math.floor(totalSecondsPerKm / 60);
+                        const paceSeconds = Math.floor(totalSecondsPerKm % 60);
+                        const formattedSeconds = paceSeconds < 10 ? '0' + paceSeconds : paceSeconds;
+                        currentPaceStr = `${paceMinutes}:${formattedSeconds}`;
+                    } else {
+                        currentPaceStr = "0:00";
+                    }
+                    lastPaceUpdateTime = now;
+                }
+
+                // Format Stopwatch Time
+                const stopwatchElapsed = totalElapsed - countdownDuration;
+                let totalSeconds = Math.floor(stopwatchElapsed / 1000);
+                let hours = Math.floor(totalSeconds / 3600);
+                let minutes = Math.floor((totalSeconds % 3600) / 60);
+                let seconds = totalSeconds % 60;
+
+                hours = hours < 10 ? '0' + hours : hours;
+                minutes = minutes < 10 ? '0' + minutes : minutes;
+                seconds = seconds < 10 ? '0' + seconds : seconds;
+
+                // Push Updates to DOM
+                document.getElementById('distance').textContent = `dist: ${totalDistance.toFixed(1)} km`;
+                document.getElementById('pace').innerHTML = `pace: ${currentPaceStr} <span class="unit">min/km</span>`;
+                document.getElementById('stopwatch').textContent = `${hours}:${minutes}:${seconds}`;
+            }
+        }
+
+        setInterval(updateOverlay, 100);
+        updateOverlay();
+    </script>
+</body>
+</html>
