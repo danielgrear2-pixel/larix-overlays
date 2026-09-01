@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>10-Second Average Pace Tracker</title>
+    <style>
+        body, html {
+            margin: 0;
+            padding: 0;
+            width: 100%;
+            height: 100%;
+            background-color: transparent;
+            display: flex;
+            justify-content: center; 
+            align-items: center;    
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            overflow: hidden;
+        }
+
+        #overlay-container {
+            display: flex;
+            flex-direction: column;
+            align-items: flex-end; 
+            text-align: right;     
+            color: #ffffff;
+            font-size: 7vw; 
+            font-weight: 700;
+            text-shadow: 2px 3px 6px rgba(0, 0, 0, 0.75); 
+            letter-spacing: 0.3vw;
+            line-height: 1.3;
+        }
+
+        .tracker-line {
+            white-space: nowrap;
+        }
+
+        .unit {
+            font-size: 3.5vw; 
+            font-weight: 500;
+            opacity: 0.9;
+            letter-spacing: 0.1vw;
+        }
+    </style>
+</head>
+<body>
+
+    <div id="overlay-container">
+        <div id="distance" class="tracker-line">DIST: 0.0 <span class="unit">km</span></div>
+        <div id="pace" class="tracker-line">PACE: 0:00 <span class="unit">min/km</span></div>
+        <div id="stopwatch" class="tracker-line">00:00:00</div>
+    </div>
+
+    <script>
+        var trackingStarted = false;
+        var startTime = null;
+        var pageLoadTime = Date.now(); // Anchor to enforce initial GPS grace period
+
+        var totalDistance = 0; 
+        var lastLat = null;
+        var lastLon = null;
+        var lastPositionTime = null;
+
+        // 10-Second Pace Averaging Variables
+        var speedSamples = [];
+        var lastPaceUpdateTime = 0;
+        var currentPaceStr = "0:00";
+
+        // Jogging launch trigger (8.0 km/h = 2.22 m/s)
+        var speedThresholdMps = 2.22; 
+        var START_OFFSET_SECONDS = 2.5; 
+
+        function calculateDistance(lat1, lon1, lat2, lon2) {
+            const R = 6371; 
+            const dLat = (lat2 - lat1) * Math.PI / 180;
+            const dLon = (lon2 - lon1) * Math.PI / 180;
+            const a = 
+                Math.sin(dLat/2) * Math.sin(dLat/2) +
+                Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * Math.sin(dLon/2) * Math.sin(dLon/2);
+            const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+            return R * c; 
+        }
+
+        if (navigator.geolocation) {
+            navigator.geolocation.watchPosition(
+                function(position) {
+                    var lat = position.coords.latitude;
+                    var lon = position.coords.longitude;
+                    var accuracy = position.coords.accuracy; 
+                    var now = Date.now();
+                    
+                    if (accuracy > 45) return;
+
+                    var currentSpeed = 0;
+
+                    // Standard speed reading directly from phone GPS chip
+                    if (position.coords.speed !== null && position.coords.speed > 0) {
+                        currentSpeed = position.coords.speed;
+                    } 
+                    // Fallback: calculate speed manually, but ONLY after 2s grace period & 1.5s time delta
+                    else if ((now - pageLoadTime > 2000) && lastLat !== null && lastLon !== null && lastPositionTime !== null) {
+                        var timeDeltaSec = (now - lastPositionTime) / 1000;
+                        if (timeDeltaSec >= 1.5) {
+                            var distKm = calculateDistance(lastLat, lastLon, lat, lon);
+                            var distMeters = distKm * 1000;
+                            
+                            // Filter out standing wobble (< 3 meters) and unreal GPS spikes (> 15 m/s / 54 km/h)
+                            if (distMeters >= 3) {
+                                var calculatedMps = distMeters / timeDeltaSec;
+                                if (calculatedMps < 15) {
+                                    currentSpeed = calculatedMps;
+                                }
+                            }
+                        }
+                    }
+
+                    // 1. Check Hands-Free Launch Trigger
+                    if (!trackingStarted) {
+                        if (currentSpeed >= speedThresholdMps) {
+                            trackingStarted = true;
+                            
+                            var offsetMs = START_OFFSET_SECONDS * 1000;
+                            startTime = now - offsetMs;
+                            lastPaceUpdateTime = startTime;
+                            speedSamples = []; 
+                            
+                            totalDistance = (speedThresholdMps * START_OFFSET_SECONDS) / 1000;
+
+                            lastLat = lat;
+                            lastLon = lon;
+                            lastPositionTime = now;
+                        } else {
+                            // Update reference points while waiting to launch
+                            lastLat = lat;
+                            lastLon = lon;
+                            lastPositionTime = now;
+                        }
+                        return; 
+                    }
+
+                    // 2. Store valid speed sample for 10-second pace window
+                    speedSamples.push(currentSpeed);
+
+                    // 3. Distance calculation logic (5-meter noise threshold)
+                    if (lastLat !== null && lastLon !== null) {
+                        var distDelta = calculateDistance(lastLat, lastLon, lat, lon);
+                        if (distDelta >= 0.005) { 
+                            totalDistance += distDelta;
+                            lastLat = lat;
+                            lastLon = lon;
+                            lastPositionTime = now;
+                        }
+                    } else {
+                        lastLat = lat;
+                        lastLon = lon;
+                        lastPositionTime = now;
+                    }
+                },
+                function(error) { console.error("GPS Error: ", error); },
+                {
+                    enableHighAccuracy: true,
+                    maximumAge: 0,
+                    timeout: 10000 
+                }
+            );
+        }
+
+        function updateOverlay() {
+            if (!trackingStarted) {
+                document.getElementById('distance').innerHTML = 'DIST: 0.0 <span class="unit">km</span>';
+                document.getElementById('pace').innerHTML = 'PACE: 0:00 <span class="unit">min/km</span>';
+                document.getElementById('stopwatch').textContent = "00:00:00";
+                return;
+            }
+
+            var now = Date.now();
+            var totalElapsed = now - startTime;
+
+            // 10-SECOND PACE CALCULATION LOOP
+            if (now - lastPaceUpdateTime >= 10000) {
+                if (speedSamples.length > 0) {
+                    var sum = 0;
+                    for (var i = 0; i < speedSamples.length; i++) {
+                        sum += speedSamples[i];
+                    }
+                    var avgSpeed = sum / speedSamples.length;
+                    speedSamples = [];
+
+                    if (avgSpeed > 0.5) { 
+                        var totalSecondsPerKm = 1000 / avgSpeed;
+                        var paceMinutes = Math.floor(totalSecondsPerKm / 60);
+                        var paceSeconds = Math.floor(totalSecondsPerKm % 60);
+                        var formattedSeconds = paceSeconds < 10 ? '0' + paceSeconds : paceSeconds;
+                        currentPaceStr = paceMinutes + ':' + formattedSeconds;
+                    } else {
+                        currentPaceStr = "0:00";
+                    }
+                }
+                lastPaceUpdateTime = now;
+            }
+
+            // Stopwatch Processing
+            var totalSeconds = Math.floor(totalElapsed / 1000);
+            var hours = Math.floor(totalSeconds / 3600);
+            var minutes = Math.floor((totalSeconds % 3600) / 60);
+            var seconds = totalSeconds % 60;
+
+            if (hours < 10) hours = '0' + hours;
+            if (minutes < 10) minutes = '0' + minutes;
+            if (seconds < 10) seconds = '0' + seconds;
+
+            var truncatedDistance = (Math.floor(totalDistance * 10) / 10).toFixed(1);
+
+            document.getElementById('distance').innerHTML = 'DIST: ' + truncatedDistance + ' <span class="unit">km</span>';
+            document.getElementById('pace').innerHTML = 'PACE: ' + currentPaceStr + ' <span class="unit">min/km</span>';
+            document.getElementById('stopwatch').textContent = hours + ':' + minutes + ':' + seconds;
+        }
+
+        setInterval(updateOverlay, 100);
+    </script>
+</body>
+</html>
